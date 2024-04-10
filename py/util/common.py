@@ -1,6 +1,9 @@
+import logging
 import os
 from torchvision.datasets.utils import download_and_extract_archive
 
+
+# Data structure utilities
 
 class DummyContext:
     def __enter__(self):
@@ -39,6 +42,8 @@ def type_or_none(T):
     return _type_or_none
 
 
+# FS utilities
+
 """
 @author: Junguang Jiang
 @contact: JiangJunguang1123@outlook.com
@@ -62,7 +67,7 @@ def read_list_from_file(file_name):
 
 def download_data(root: str, file_name: str, archive_name: str, url_link: str):
     if not os.path.exists(os.path.join(root, file_name)):
-        print("Downloading {}".format(file_name))
+        logging.info("Downloading {}".format(file_name))
         try:
             download_and_extract_archive(url_link, download_root=root, filename=archive_name, remove_finished=False)
         except Exception:

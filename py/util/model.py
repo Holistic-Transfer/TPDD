@@ -1,3 +1,4 @@
+import logging
 import torch
 import torch.nn as nn
 
@@ -24,16 +25,15 @@ def create_model(arch, freeze_bn, dropout, num_classes, load_model_path):
         dropout_p=dropout,
         finetune=True, pool_layer=None)
 
-    print(f'==> Loading weights from {load_model_path}')
+    logging.info(f'Loading weights from {load_model_path}... ')
     checkpoint = torch.load(load_model_path, map_location='cpu')
     msg = model.load_state_dict(checkpoint)
-    print(msg)
+    logging.info(f'Load model message: `{msg}`. ')
     return model
 
 
 def get_parameters(model, base_lr=1.0, finetune=False, fixedcls=False, fixed_backbone=False):
-    # assert not (finetune and fixedcls), 'finetune and fixedcls cannot be True at the same time'
-    print(f'finetune: {finetune}, fixedcls: {fixedcls}')
+    logging.info(f'finetune: {finetune}, fixedcls: {fixedcls}')
     all_params = [{
         "params": model.backbone.parameters(),
         "lr": 0.1 * base_lr if finetune else 1.0 * base_lr
@@ -45,16 +45,15 @@ def get_parameters(model, base_lr=1.0, finetune=False, fixedcls=False, fixed_bac
         "lr": 1.0 * base_lr
     }]
     if fixed_backbone:
-        print('##### Fixed backbone')
+        logging.info('Getting fixed backbone parameters... ')
         _ind = [1, 2]
     elif fixedcls:
-        print('##### Fixed cls')
+        logging.info('Getting fixed classifier parameters... ')
         _ind = [0, 1]
     else:
-        print('##### Full ')
+        logging.info('Getting full parameters... ')
         _ind = [0, 1, 2]
     params = [all_params[i] for i in _ind]
-    print(params)
     return params
 
 
@@ -110,5 +109,5 @@ def build_optimizer(model, optimizer, optimizer_parameters, freeze_classifier, f
         optimizer = Adam(params, **optimizer_parameters)
     else:
         raise NotImplementedError()
-    print(optimizer)
+    logging.info(f'Optimizer: \n{optimizer}')
     return optimizer

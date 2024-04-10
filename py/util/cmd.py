@@ -47,6 +47,7 @@ def parse_arguments():
     parser.add_argument('--base_dir', type=str, default=C.EXPERIMENT_PATH)
     parser.add_argument('--seed', type=common.type_or_none(int), default=0)
     parser.add_argument('--serialization_config', default='{}')
+    parser.add_argument('--debug', action='store_true')
     args, _ = parser.parse_known_args()
     if args.dataset == 'OfficeHome':
         parser.add_argument('--batch_size', default=64, type=int)
@@ -60,6 +61,8 @@ def parse_arguments():
         parser.add_argument('--optimizer', type=str, default='SGD')
         parser.add_argument('--optimizer_parameters', type=str,
                             default='{"lr":1e-3,"weight_decay":5e-4,"momentum":0.9,"nesterov":true}')
+    else:
+        raise NotImplementedError(f"Unsupported dataset: {args.dataset}. ")
     args = parser.parse_args()
     _precheck_arguments(args)
     _process_arguments(args)

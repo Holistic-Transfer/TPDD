@@ -1,14 +1,19 @@
 import os
+import logging
 
-# Path constant
+# Path
 ASSET_DIR_NAME = 'asset'
 OUT_DIR_NAME = 'out'
 EXPERIMENT_DIR_NAME = 'experiment'
-
-# Path
 EXPERIMENT_PATH = os.path.join(OUT_DIR_NAME, EXPERIMENT_DIR_NAME)
+
+# Setting
+EVALUATE_TOP_K = (1, 5)
 
 # OfficeHome dataset
 OFFICEHOME_DIR_PATH = os.path.join(ASSET_DIR_NAME, 'OfficeHome')
 OFFICEHOME_DATA_PATH = os.path.join(OFFICEHOME_DIR_PATH, 'data')
 OFFICEHOME_IMAGE_LIST_PATH = os.path.join(OFFICEHOME_DIR_PATH, 'image_list')
+
+# Logging
+LOG_FORMAT = "%(asctime)s - %(levelname)-5s - (%(filename)-10s: %(lineno)4d): %(message)s "

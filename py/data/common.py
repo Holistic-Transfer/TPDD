@@ -1,24 +1,30 @@
-from torch.utils.data import DataLoader, Sampler, Dataset
-
-import torchvision.datasets as datasets
-from torchvision.datasets.folder import default_loader
-
-from typing import Optional, Callable, Tuple, Any, List
-
-import os
-from typing import List
+import time
+import logging
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 
 class DomainInfo:
     def __init__(self, all_classes, visible_classes, invisible_classes=None, num_classes=None):
+        assert isinstance(all_classes, torch.Tensor), 'all_classes must be a tensor. '
+        assert isinstance(visible_classes, torch.Tensor), 'visible_classes must be a tensor. '
+        assert (invisible_classes is None) or (isinstance(invisible_classes, torch.Tensor)), 'invisible_classes must be a tensor. '
         self.all_classes = all_classes
         self.visible_classes = visible_classes
         if invisible_classes is None:
-            invisible_classes = list(set(all_classes) - set(visible_classes))
+            visible_ind = torch.isin(all_classes, visible_classes)
+            invisible_ind = ~visible_ind
+            invisible_classes = all_classes[invisible_ind]
         if num_classes is None:
             num_classes = len(all_classes)
         self.invisible_classes = invisible_classes
         self.num_classes = num_classes
+    
+    def to(self, device):
+        self.all_classes = self.all_classes.to(device)
+        self.visible_classes = self.visible_classes.to(device)
+        self.invisible_classes = self.invisible_classes.to(device)
+        return self
 
 
 class PartialDomainDataset(Dataset):
@@ -32,7 +38,10 @@ class PartialDomainDataset(Dataset):
         self._visible_ind = None
         self._invisible_ind = None
         self._all_ind = None
+        start = time.time()
         self._init_indices()
+        end = time.time()
+        logging.info(f'PartialDomainDataset init time: {end - start:.3f} s. ')
 
     def _check_dataset_format(self, dataset):
         _sample = dataset[0]

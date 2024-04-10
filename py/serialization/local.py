@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import logging
 import os
 from collections import defaultdict
 from functools import reduce
@@ -8,25 +9,96 @@ import torch
 from ..util import constant as C
 
 
-class File:
-    def __init__(self, path, epoch=-1):
+class CheckpointDirectory:
+
+    def __init__(self, path):
         self.path = path
-        self.epoch = epoch
+        self.epochs = []
+        self.reload()
 
-    def __lt__(self, other):
-        return self.epoch < other.epoch
+    def _check_format(self, f):
+        return f.endswith('.pth') and f[:-4].isnumeric()
 
-    def __eq__(self, other):
-        return self.epoch == other.epoch
+    def reload(self):
+        if not os.path.exists(self.path):
+            os.makedirs(self.path)
+        for f in os.listdir(self.path):
+            if not self._check_format(f):
+                continue
+            epoch = int(f[:-4])
+            self.epochs.append(epoch)
+        self.epochs.sort()
 
-    def __gt__(self, other):
-        return self.epoch > other.epoch
+    def add(self, epoch):
+        if epoch in self.epochs:
+            return
+        self.epochs.append(epoch)
+        self.epochs.sort()
 
-    def __le__(self, other):
-        return self.epoch <= other.epoch
+    def save(self, ckpt, epoch):
+        print(f'Adding epoch {epoch} to {self.path}')
+        self.add(epoch)
+        print(f'Saving checkpoint to {self._epoch_file(epoch)}')
+        torch.save(ckpt, self._epoch_file(epoch))
 
-    def __ge__(self, other):
-        return self.epoch >= other.epoch
+    def epochs(self):
+        return self.epochs
+    
+    def _epoch_file(self, epoch):
+        return os.path.join(self.path, f'{epoch}.pth')
+
+    def epoch_file(self, epoch):
+        assert epoch in self.epochs, f'Epoch {epoch} not found in {self.path}'
+        return self._epoch_file(epoch)
+
+    def epoch_files(self):
+        return [os.path.join(self.path, f'{epoch}.pth') for epoch in self.epochs]
+
+    def __str__(self):
+        return f'Checkpoint Dir Epochs: {self.epochs}'
+
+class PathTree:
+
+    def __init__(self, base_path):
+        self.base_path = base_path
+        self.dict_tree = {}
+        self._construct()
+    
+    def _construct(self):
+        for root, dirs, _ in os.walk(self.base_path):
+            if root == self.base_path or dirs:
+                continue
+            self.add(root)
+
+    def _rel_hierarchy(self, path):
+        _relpath = os.path.relpath(path, self.base_path)
+        _rel_hierarchy = _relpath.split(os.sep)
+        return _rel_hierarchy
+
+    def add(self, path):
+        _path = self._rel_hierarchy(path)
+        _tree = self.dict_tree
+        for p in _path[:-1]:
+            if p not in _tree:
+                _tree[p] = {}
+            _tree = _tree[p]
+        if _path[-1] in _tree:
+            assert isinstance(_tree[_path[-1]], CheckpointDirectory), f'Path {path} is not leaf dir.'
+            ckpt_dir = _tree[_path[-1]]
+        else:
+            ckpt_dir = CheckpointDirectory(path)
+            _tree[_path[-1]] = ckpt_dir
+        return ckpt_dir
+            
+    def get(self, path):
+        _path = self._rel_hierarchy(path)
+        _tree = self.dict_tree
+        for p in _path:
+            _tree = _tree[p]
+        return _tree
+
+    def __str__(self):
+        return str(self.tree)
 
 
 class Serialization:
@@ -76,152 +148,74 @@ class Serialization:
         return CLS(base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer,
                    optimizer_parameters, seed)
 
+    def __str__(self):
+        return f'Dataset: {self.dataset}, Arch: {self.arch}, Source: {self.source}, Target: {self.target}, N Seen Classes: {self.n_seen_classes}, Model Config: {self.model_config}, Optimizer: {self.optimizer}, Optimizer Parameters: {self.optimizer_parameters}, Seed: {self.seed}'
+
 
 class Experiment(Serialization):
-    _CHECKPOINT_PREFIX = ['model', 'feature', 'logit', 'y', 'y_pred']
-    _DEFAULT_PREFIX = _CHECKPOINT_PREFIX[0]
+
+    _DEFAULT_PREFIX = 'model'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.log_file = None
-        self._file_path = {}
-        self._construct()
+        self.tree = PathTree(self.path)
+        self.tree._construct()
 
-    @property
-    def source_model_path(self):
-        return os.path.join(self.source_path, 'source.pth')
+    def set_logging(self, debug):
+        if logging.getLogger().hasHandlers():
+            return
+        
+        if debug:
+            level = logging.DEBUG
+        else:
+            level = logging.INFO
+        
+        logger = logging.getLogger()
+        logger.setLevel(level)
+
+        fh = logging.FileHandler(self.log_path, mode='w')
+        fh.setLevel(level)
+        
+        ch = logging.StreamHandler()
+        ch.setLevel(level)
+        
+        formatter = logging.Formatter(C.LOG_FORMAT)
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
+        
+        logger.addHandler(fh)
+        logger.addHandler(ch)
+        
+        logger.info(f'Experiment start time: {datetime.now()}')
+        logger.info(f'Experiment path: {self.path}')
+        logger.info(f'Experiment info: {self}')
+
+    def abs_path(self, path):
+        return os.path.join(self.path, path)
 
     @property
     def log_path(self):
-        _log_path = self._file_path['log']
-        return _log_path
-
-    def _search_log_path(self):
-        latest_file = None
-        latest_date = None
-        for f in os.listdir(self.path):
-            if f.startswith('train-'):
-                date_str = f.split('.txt')[0].split('train-')[1]  # Extract the date from the filename
-                date = datetime.strptime(date_str, '%Y-%m-%d-%H_%M_%S')  # Convert the date string to a datetime object
-                if latest_date is None or date > latest_date:
-                    latest_date = date
-                    latest_file = f
-        return latest_file
-
-    def _sort(self):
-        for prefix in Experiment._CHECKPOINT_PREFIX:
-            if prefix not in self._file_path:
-                continue
-            prefix_checkpoint_path = self._file_path[prefix]
-            prefix_checkpoint_path.sort()
-            self._file_path[prefix] = prefix_checkpoint_path
-
-    def _construct(self):
-        # Construct checkpoint files
-        for prefix in Experiment._CHECKPOINT_PREFIX:
-            prefix_path = os.path.join(self.path, prefix)
-            if not os.path.exists(prefix_path):
-                os.makedirs(prefix_path)
-            for f in os.listdir(prefix_path):
-                path = os.path.join(prefix_path, f)
-                epoch = int(f.split('.')[0])
-                self.add_checkpoint(prefix, path, epoch)
-        # TODO: Refactor log file
-        # Construct log file
-        _log_path = self._search_log_path()
-        if _log_path is not None:
-            _log_path = os.path.join(self.path, _log_path)
-        self._file_path['log'] = _log_path
+        return self.abs_path('log.txt')
 
     def epochs(self, prefix=None):
         if prefix is None:
-            prefix = 'model'
-        assert prefix in self._CHECKPOINT_PREFIX, f'Unknown prefix: {prefix}. '
-        if prefix not in self._file_path:
-            return []
-        else:
-            return [f.epoch for f in self._file_path[prefix]]
-
-    def checkpoint(self, prefix, epoch=None):
-        assert prefix in self._CHECKPOINT_PREFIX, f'Unknown prefix: {prefix}. '
+            prefix = self._DEFAULT_PREFIX
+        return self.tree.get(prefix).epochs()
+        
+    def get_checkpoint(self, prefix=None, epoch=None):
         if epoch is None:
-            _checkpoint = self._file_path[prefix]
-            return _checkpoint
-        else:
-            _epochs = self.epochs(prefix)
-            if epoch not in _epochs:
-                return None
-            ind = _epochs.index(epoch)
-            _checkpoint = self._file_path[prefix][ind]
-            return _checkpoint
+            epoch = self.epochs(prefix)[-1]
+        return self.tree.get(prefix).epoch_file(epoch)
 
-    def checkpoint_path(self, prefix=None):
-        if prefix is None:
-            prefix = Experiment._DEFAULT_PREFIX
-        assert prefix in Experiment._CHECKPOINT_PREFIX, f'Unknown prefix: {prefix}. '
-        _checkpoint_path = os.path.join(self.path, prefix)
-        return _checkpoint_path
-
-    def latest_checkpoint_path(self, prefix=None):
-        if prefix is None:
-            prefix = Experiment._DEFAULT_PREFIX
-        assert prefix in Experiment._CHECKPOINT_PREFIX, f'Unknown prefix: {prefix}. '
-        if prefix not in self._file_path:
-            return None
-        latest_checkpoint = self._file_path[prefix][-1]
-        latest_checkpoint_path = latest_checkpoint.path
-        return latest_checkpoint_path
-
-    def add_checkpoint(self, prefix, path, epoch):
-        assert isinstance(epoch, int), f'Epoch should be an integer. Got {epoch}'
-        assert prefix in self._CHECKPOINT_PREFIX, f'Unknown prefix: {prefix}. '
-        if prefix not in self._file_path:
-            self._file_path[prefix] = []
-        checkpoint = File(path, epoch)
-        self._file_path[prefix].append(checkpoint)
-        self._sort()
-
-    def save_checkpoint(self, epoch, data, prefix):
-        filename = f'{epoch}.pth'
-        path = os.path.join(self.checkpoint_path(prefix), filename)
-        self.add_checkpoint(prefix, path, epoch)
-        torch.save(data, path)
-
-    def load_checkpoint(self, epoch, prefix):
-        # Epoch is number
-        assert isinstance(epoch, int), f'Epoch should be an integer. Got {epoch}'
-        path = self.checkpoint(prefix, epoch)
-        return torch.load(path)
-
-    def load_latest_checkpoint(self, prefix=None):
-        if prefix is None:
-            prefix = Experiment._DEFAULT_PREFIX
-        assert prefix in Experiment._CHECKPOINT_PREFIX, f'Unknown prefix: {prefix}. '
-        path = self.latest_checkpoint_path(prefix)
-        _checkpoint = torch.load(path)
-        return _checkpoint
-
-    # def load_source_model(self):
-    #     _source_model_path = self.source_model_path
-    #     _model = torch.load(_source_model_path)
-    #     return _model
+    def save_checkpoint(self, prefix, epoch, ckpt):
+        path = self.abs_path(prefix)
+        ckpt_dir = self.tree.add(path)
+        ckpt_dir.save(ckpt, epoch)
 
     @property
     def source_model_path(self):
         _path = os.path.join(self.source_path, 'source.pth')
         return _path
-
-
-class FeatureExtraction(Serialization):
-    pass
-
-
-class MetricResult(Serialization):
-    pass
-
-
-class PlotResult(Serialization):
-    pass
 
 
 class SerializationSpace:
@@ -269,7 +263,6 @@ class SerializationSpace:
                 self.add_from_path(_rel_p)
 
 
-# TODO: Refactor using generic types
 class ExperimentSpace(SerializationSpace):
     def __init__(self, base_path=None):
         if base_path is None:
@@ -279,38 +272,9 @@ class ExperimentSpace(SerializationSpace):
 
     def instance_from_path(self, path):
         return Serialization.from_path(Experiment, self.base_path, path)
-
-    def new(self, *args, **kwargs):
-        instance = Experiment(self.base_path, *args, **kwargs)
+    
+    def start(self, dataset, arch, source, target, model_config, n_seen_classes, optimizer, optimizer_parameters, seed, debug):
+        instance = Experiment(self.base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer, optimizer_parameters, seed)
+        instance.set_logging(debug)
         self.add(instance)
         return instance
-
-
-class PlotResultSpace(SerializationSpace):
-    def __init__(self, base_path=None):
-        if base_path is None:
-            base_path = C.PLOT_RESULT_PATH
-        super().__init__(base_path)
-
-    def instance_from_path(self, path):
-        return Serialization.from_path(PlotResult, self.base_path, path)
-
-
-class FeatureExtractionSpace(SerializationSpace):
-    def __init__(self, base_path=None):
-        if base_path is None:
-            base_path = C.FEATURE_EXTRACTION_PATH
-        super().__init__(base_path)
-
-    def instance_from_path(self, path):
-        return Serialization.from_path(FeatureExtraction, self.base_path, path)
-
-
-class MetricResultSpace(SerializationSpace):
-    def __init__(self, base_path=None):
-        if base_path is None:
-            base_path = C.METRIC_RESULT_PATH
-        super().__init__(base_path)
-
-    def instance_from_path(self, path):
-        return Serialization.from_path(MetricResult, self.base_path, path)
