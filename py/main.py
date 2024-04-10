@@ -51,8 +51,6 @@ class HolisticTransfer:
 
 
 def main(args):
-    # Import hard coded values used in paper
-    from . import HT_HARDCODED as HC
     # Unpack arguments
     base_dir = args.base_dir
     device = args.device
@@ -113,6 +111,8 @@ def main(args):
         testing_data = dataset.officehome(target, 'testing')
 
     logging.info('Getting visible classes... ')
+    # Import hard coded values used in paper
+    from . import HT_HARDCODED as HC
     all_classes, visible_classes = HC.GET_VISIBLE_CLASSES(dataset_name, source, target, n_seen_classes)
 
     logging.info('Creating domain info... ')
