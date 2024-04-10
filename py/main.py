@@ -25,14 +25,14 @@ class HolisticTransfer:
         experiment = self.experiment
 
         def _f(_self):
-            logging.debug('Evaluating after epoch... ')
+            logging.info('Evaluating after epoch... ')
             evaluation = _self.evaluate()            
             for k, _evaluation in evaluation.items():
-                logging.debug(f'{k} Evaluation: {_evaluation}')
+                logging.debug(f'\n{k} Evaluation: \n{_evaluation}')
                 epoch = _self.state['next_epoch']
-                logging.debug(f'Saving evaluation for {k}... ')
+                logging.info(f'Saving evaluation for {k}... ')
                 experiment.save_checkpoint(f'evaluation/{k}', epoch, _evaluation)
-            logging.debug('Saving model... ')
+            logging.info('Saving model... ')
             experiment.save_checkpoint('model', epoch, _self.model.state_dict())
 
         return _f

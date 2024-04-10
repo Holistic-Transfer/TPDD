@@ -27,10 +27,13 @@ def _process_arguments(args):
     args.model_config = json.loads(args.model_config)
     args.training_config = json.loads(args.training_config)
     args.optimizer_parameters = json.loads(args.optimizer_parameters)
+    if args.debug:
+        args.training_config['epochs'] = 1
+        args.training_config['iterations'] = 1
+        args.training_config['save_every'] = 1
 
 
 def _postcheck_arguments(args):
-    training_config = args.training_config
     model_config = args.model_config
     assert not (model_config['freeze_classifier'] and model_config[
         'freeze_backbone']), f"Cannot freeze both classifier and backbone"

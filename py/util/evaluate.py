@@ -1,6 +1,8 @@
 import copy
+import tabulate
 import torch
 import torch.nn.functional as F
+import prettytable
 
 from . import math
 
@@ -12,37 +14,37 @@ class Extraction:
         self.logits = logits
         self.labels = labels
 
-class Metric:
-
-    def __init__(self, all_all_accuracy, visible_all_accuracy, invisible_all_accuracy, visible_visible_accuracy,
-                 invisible_invisible_accuracy):
-        self.all_all_accuracy = all_all_accuracy
-        self.visible_all_accuracy = visible_all_accuracy
-        self.invisible_all_accuracy = invisible_all_accuracy
-        self.visible_visible_accuracy = visible_visible_accuracy
-        self.invisible_invisible_accuracy = invisible_invisible_accuracy
-
-    PRINT_COL_WIDTH = [35, 35, 35, 35, 35]
-    HEADERS = ["All-All", "Visible-All", "Invisible-All", "Visible-Visible", "Invisible-Invisible"]
-
-    def __str__(self):
-        formatted_headers = [f"{header:<{col_width}}" for header, col_width in zip(self.HEADERS, self.PRINT_COL_WIDTH)]
-        data = [self.all_all_accuracy, self.visible_all_accuracy, self.invisible_all_accuracy, self.visible_visible_accuracy, self.invisible_invisible_accuracy]
-        formatted_data = [f"{str(data_value):<{col_width}}" for data_value, col_width in zip(data, self.PRINT_COL_WIDTH)]
-        formatted_string = f"\n{' '.join(formatted_headers)}\n{' '.join(formatted_data)}\n"
-        return formatted_string
-
 
 class Evaluation:
 
-    def __init__(self, extraction, clsf_metric, nmc_metric, lp_metric):
+    def __init__(self, extraction, metric):
         self.extraction = extraction
-        self.clsf_metric = clsf_metric
-        self.nmc_metric = nmc_metric
-        self.lp_metric = lp_metric
+        self.metric = metric
+        self.tables = self._generate_tables()
+
+    def _generate_tables(self):
+        tables = []
+        for category, metrics in self.metric.items():
+            if metrics is None:
+                continue             
+            table = prettytable.PrettyTable()
+            header = [category]
+            sub_metric_set = set()
+            for sub_metrics in metrics.values():
+                if isinstance(sub_metrics, dict):
+                    sub_metric_set.update(sub_metrics.keys())
+            header.extend(sub_metric_set)
+            table.field_names = header
+            for metric_name, sub_metrics in metrics.items():
+                row = [metric_name]
+                for sub_metric in header[1:]:
+                    row.append(sub_metrics.get(sub_metric, "N/A"))
+                table.add_row(row)
+            tables.append(str(table))
+        return tables
 
     def __str__(self):
-        return f'CLSF: {self.clsf_metric}\n NMC: {self.nmc_metric}\n LP: {self.lp_metric}\n'
+        return '\n'.join([table for table in self.tables])
 
 
 def get_class_mean(domain_info, features, labels):
@@ -103,8 +105,13 @@ def generate_metric(domain_info, similarity, label):
     #  From invisible classes / Over invisible classes
     invisible_invisible_accuracy = mask_predict_similarity(similarity, label, row_mask=visible_row_mask, column_mask=visible_column_mask)
     # Package accuracies
-    accuracies = Metric(all_all_accuracy, visible_all_accuracy, invisible_all_accuracy, visible_visible_accuracy,
-                        invisible_invisible_accuracy)
+    accuracies = {
+        'All/All Accuracy': all_all_accuracy,
+        'Visible/All Accuracy': visible_all_accuracy,
+        'Invisible/All Accuracy': invisible_all_accuracy,
+        'Visible/Visible Accuracy': visible_visible_accuracy,
+        'Invisible/Invisible Accuracy': invisible_invisible_accuracy
+    }
     return accuracies
 
 
@@ -134,8 +141,7 @@ def evaluate_nmc(domain_info, extraction, oracle_extraction):
 
 
 def evaluate_lp():
-    # TODO: Linear Probing Evaluation
-    return None
+    pass
 
 
 def evaluate(domain_info, extraction, oracle_extraction):
@@ -146,5 +152,10 @@ def evaluate(domain_info, extraction, oracle_extraction):
     # Evaluate the features through the linear probing
     lp_metric = evaluate_lp()
     # Package evaluation
-    evaluation = Evaluation(extraction, clsf_metric, nmc_metric, lp_metric)
+    evaluation_metric = {
+        'Classifier Accuracy': clsf_metric,
+        'NMC Accuracy': nmc_metric,
+        'LP Metric': lp_metric
+    }
+    evaluation = Evaluation(extraction, evaluation_metric)
     return evaluation

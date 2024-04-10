@@ -36,9 +36,9 @@ class CheckpointDirectory:
         self.epochs.sort()
 
     def save(self, ckpt, epoch):
-        print(f'Adding epoch {epoch} to {self.path}')
+        logging.debug(f'Adding epoch {epoch} to {self.path}')
         self.add(epoch)
-        print(f'Saving checkpoint to {self._epoch_file(epoch)}')
+        logging.debug(f'Saving checkpoint to {self._epoch_file(epoch)}')
         torch.save(ckpt, self._epoch_file(epoch))
 
     def epochs(self):
@@ -115,9 +115,11 @@ class Serialization:
         self.optimizer_parameters = str(optimizer_parameters)
         self.seed = str(seed)
         self.files = None
-        if not os.path.exists(self.path):
-            os.makedirs(self.path)
 
+    @property
+    def exists(self):
+        return os.path.exists(self.path)
+    
     @property
     def path(self):
         return os.path.join(self.base_path, self.dataset, self.arch, self.source, self.target, self.n_seen_classes,
@@ -147,6 +149,10 @@ class Serialization:
             path)
         return CLS(base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer,
                    optimizer_parameters, seed)
+
+    def create(self):
+        assert not self.exists, f'Path {self.path} already exists. '
+        os.makedirs(self.path)
 
     def __str__(self):
         return f'Dataset: {self.dataset}, Arch: {self.arch}, Source: {self.source}, Target: {self.target}, N Seen Classes: {self.n_seen_classes}, Model Config: {self.model_config}, Optimizer: {self.optimizer}, Optimizer Parameters: {self.optimizer_parameters}, Seed: {self.seed}'
@@ -275,6 +281,8 @@ class ExperimentSpace(SerializationSpace):
     
     def start(self, dataset, arch, source, target, model_config, n_seen_classes, optimizer, optimizer_parameters, seed, debug):
         instance = Experiment(self.base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer, optimizer_parameters, seed)
-        instance.set_logging(debug)
+        if not instance.exists:
+            instance.create()
         self.add(instance)
+        instance.set_logging(debug)
         return instance

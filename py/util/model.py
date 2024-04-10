@@ -109,5 +109,5 @@ def build_optimizer(model, optimizer, optimizer_parameters, freeze_classifier, f
         optimizer = Adam(params, **optimizer_parameters)
     else:
         raise NotImplementedError()
-    logging.info(f'Optimizer: \n{optimizer}')
+    logging.debug(f'\nOptimizer: \n{optimizer}')
     return optimizer

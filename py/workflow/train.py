@@ -82,7 +82,6 @@ class PartialDomainTrainer:
         assert isinstance(dataset, data_util.PartialDomainDataset), 'Only PartialDomainDataset is supported. '
         self.training_loader = loader
         self.training_iterator = data_util.ForeverDataIterator(loader)
-        # self.val_loader['Train'] = loader
 
     def _training_iteration(self):
         self.model.train()
@@ -191,6 +190,11 @@ class PartialDomainTrainer:
         # Overwrite this method to save evaluation results
         return self.evaluate()
 
+    def _print_evaluate(self):
+        eval_result = self.evaluate()
+        for _k, _r in eval_result.items():
+            logging.info(f'{_k} metrics: \n{_r}')
+
     def fit(self):
         assert self._inited, 'Trainer has not been initialized. '
         logging.info(f'Starting training, training_config: {self.training_config}... ')
@@ -202,6 +206,8 @@ class PartialDomainTrainer:
         eval_freq = training_config['evaluate_freq']
         eval_every = max(1, int(iterations * eval_freq))
         logging.debug(f'Evaluation frequency: {eval_every}. ')
+        logging.info('Pre-training evaluating... ')
+        self._print_evaluate()
         for epoch in range(state['next_epoch'], epochs):
             for iteration in range(state['next_iteration'], iterations):
                 logging.debug(f'Epoch {epoch}, iteration {iteration}... ')
@@ -212,9 +218,8 @@ class PartialDomainTrainer:
                 state['lr_scheduler'].step()
                 # Evaluation
                 if iteration % eval_every == 0:
-                    eval_result = self.evaluate()
-                    for _k, _r in eval_result.items():
-                        logging.info(f'Epoch {epoch}, iteration {iteration}, {_k} metrics: \n{_r}')
+                    logging.info(f'Epoch {epoch}, iteration {iteration}, evaluating... ')
+                    self._print_evaluate()
             # TODO: Refactor this line
             self.evaluate_and_save()
             state['next_iteration'] = 0

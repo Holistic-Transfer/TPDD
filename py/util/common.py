@@ -3,14 +3,11 @@ import os
 from torchvision.datasets.utils import download_and_extract_archive
 
 
-# Data structure utilities
+"""
 
-class DummyContext:
-    def __enter__(self):
-        return self
+Data structure utilities
 
-    def __exit__(self, *args):
-        pass
+"""
 
 
 def flatten_list(l):
@@ -41,10 +38,12 @@ def type_or_none(T):
 
     return _type_or_none
 
-
-# FS utilities
-
 """
+
+ FS utilities
+
+ Modified from:
+
 @author: Junguang Jiang
 @contact: JiangJunguang1123@outlook.com
 
@@ -72,3 +71,17 @@ def download_data(root: str, file_name: str, archive_name: str, url_link: str):
             download_and_extract_archive(url_link, download_root=root, filename=archive_name, remove_finished=False)
         except Exception:
             raise Exception(f"Fail to download {archive_name} from url link {url_link}. ")
+
+
+"""
+
+Other utilities
+
+"""
+
+class DummyContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
