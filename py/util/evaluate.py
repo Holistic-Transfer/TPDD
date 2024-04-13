@@ -9,15 +9,18 @@ from . import math
 
 class Extraction:
 
-    def __init__(self, features, logits, labels):
+    def __init__(self, features, features_unpooled, logits, labels, data_ind):
         self.features = features
+        self.features_unpooled = features_unpooled
         self.logits = logits
         self.labels = labels
+        self.data_ind = data_ind
 
 
 class Evaluation:
 
-    def __init__(self, extraction, metric):
+    def __init__(self, domain_info, extraction, metric):
+        self.domain_info = domain_info
         self.extraction = extraction
         self.metric = metric
         self.tables = self._generate_tables()
@@ -66,29 +69,29 @@ def get_class_mean(domain_info, features, labels):
 
 def mask_similarity(similarity, row_mask, column_mask):
     similarity = copy.deepcopy(similarity)
-    similarity[row_mask] = -torch.inf
-    similarity[:, column_mask] = -torch.inf
+    similarity[~row_mask] = -torch.inf
+    similarity[:, ~column_mask] = -torch.inf
     return similarity
 
 def mask_predict_similarity(similarity, label, row_mask=None, column_mask=None):
     if row_mask is None:
-        row_mask = torch.zeros(similarity.shape[0], dtype=torch.bool)
+        row_mask = torch.ones(similarity.shape[0], dtype=torch.bool)
     if column_mask is None:
-        column_mask = torch.zeros(similarity.shape[1], dtype=torch.bool)
+        column_mask = torch.ones(similarity.shape[1], dtype=torch.bool)
     masked_similarity = mask_similarity(similarity, row_mask, column_mask)
-    masked_similarity = masked_similarity[~row_mask]
-    masked_label = label[~row_mask]
+    masked_similarity = masked_similarity[row_mask]
+    masked_label = label[row_mask]
     accuracy = math.topk_accuracy(masked_similarity, masked_label)
     return accuracy
 
-def generate_metric(domain_info, similarity, label):
+def generate_metric(domain_info, similarity, label, data_ind):
     # Unpack domain_info
     visible_classes = domain_info.visible_classes
     invisible_classes = domain_info.invisible_classes
     dim_similarity = similarity.shape[1]
     # Masks
-    visible_row_mask = torch.isin(label, visible_classes)
-    invisible_row_mask = torch.isin(label, invisible_classes)
+    visible_row_mask = torch.isin(data_ind, domain_info.visible_ind)
+    invisible_row_mask = torch.isin(data_ind, domain_info.invisible_ind)
     visible_column_mask = torch.zeros(dim_similarity, dtype=torch.bool)
     visible_column_mask[visible_classes] = 1
     invisible_column_mask = torch.zeros(dim_similarity, dtype=torch.bool)
@@ -97,13 +100,13 @@ def generate_metric(domain_info, similarity, label):
     #  From all classes / Over all classes
     all_all_accuracy = mask_predict_similarity(similarity, label, row_mask=None, column_mask=None)
     #  From visible classes / Over all classes
-    visible_all_accuracy = mask_predict_similarity(similarity, label, row_mask=invisible_row_mask, column_mask=None)
+    visible_all_accuracy = mask_predict_similarity(similarity, label, row_mask=visible_row_mask, column_mask=None)
     #  From invisible classes / Over all classes
-    invisible_all_accuracy = mask_predict_similarity(similarity, label, row_mask=visible_row_mask, column_mask=None)
+    invisible_all_accuracy = mask_predict_similarity(similarity, label, row_mask=invisible_row_mask, column_mask=None)
     #  From visible classes / Over visible classes
-    visible_visible_accuracy = mask_predict_similarity(similarity, label, row_mask=invisible_row_mask, column_mask=invisible_column_mask)
+    visible_visible_accuracy = mask_predict_similarity(similarity, label, row_mask=visible_row_mask, column_mask=visible_column_mask)
     #  From invisible classes / Over invisible classes
-    invisible_invisible_accuracy = mask_predict_similarity(similarity, label, row_mask=visible_row_mask, column_mask=visible_column_mask)
+    invisible_invisible_accuracy = mask_predict_similarity(similarity, label, row_mask=invisible_row_mask, column_mask=invisible_column_mask)
     # Package accuracies
     accuracies = {
         'All/All Accuracy': all_all_accuracy,
@@ -115,17 +118,19 @@ def generate_metric(domain_info, similarity, label):
     return accuracies
 
 
-def evaluate_clsf(domain_info, extraction):
+def evaluate_clsf(domain_info, extraction, oracle_extraction):
     logits = extraction.logits
     labels = extraction.labels
+    data_ind = extraction.data_ind
     # Calculate metric
-    metric = generate_metric(domain_info, logits, labels)
+    metric = generate_metric(domain_info, logits, labels, data_ind)
     return metric
 
 def evaluate_nmc(domain_info, extraction, oracle_extraction):
     # Unpack extraction
     features = extraction.features
     labels = extraction.labels
+    data_ind = extraction.data_ind
     # Unpack oracle_extraction
     oracle_features = oracle_extraction.features
     oracle_labels = oracle_extraction.labels
@@ -136,7 +141,7 @@ def evaluate_nmc(domain_info, extraction, oracle_extraction):
     normed_clz_mean = F.normalize(clz_mean, dim=1)
     similarity = torch.matmul(normed_features, normed_clz_mean.T)
     # Calculate metric
-    metric = generate_metric(domain_info, similarity, labels)
+    metric = generate_metric(domain_info, similarity, labels, data_ind)
     return metric
 
 
@@ -146,7 +151,7 @@ def evaluate_lp():
 
 def evaluate(domain_info, extraction, oracle_extraction):
     # Evaluate the features through the classifier (regular cnn model)
-    clsf_metric = evaluate_clsf(domain_info, extraction)
+    clsf_metric = evaluate_clsf(domain_info, extraction, oracle_extraction)
     # Evaluate the features through the nearest mean classifier
     nmc_metric = evaluate_nmc(domain_info, extraction, oracle_extraction)
     # Evaluate the features through the linear probing
@@ -157,5 +162,5 @@ def evaluate(domain_info, extraction, oracle_extraction):
         'NMC Accuracy': nmc_metric,
         'LP Metric': lp_metric
     }
-    evaluation = Evaluation(extraction, evaluation_metric)
+    evaluation = Evaluation(domain_info, extraction, evaluation_metric)
     return evaluation

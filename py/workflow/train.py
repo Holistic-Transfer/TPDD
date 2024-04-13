@@ -25,11 +25,14 @@ class PartialDomainTrainer:
         self.training_config = None
         self._inited = False
 
-    @staticmethod
-    def _f_loss(loss_type, loss_scope, domain_info):
+
+    def _f_loss(self, loss_type, loss_scope, domain_info):
         # Unpack domain info
         visible_classes = domain_info.visible_classes
         num_classes = domain_info.num_classes
+        # Visible and invisible inds
+        dataset = self.training_loader.dataset
+
         # Define loss function
         if loss_type == 'cross-entropy':
             _f = F.cross_entropy
@@ -37,14 +40,13 @@ class PartialDomainTrainer:
         if loss_scope == 'all':
             def _loss(logits, y):
                 return _f(logits, y)
-        elif loss_scope == 'seen':
-            visible_mask = torch.zeros(num_classes, dtype=torch.bool)
-            visible_mask[visible_classes] = 1
-
-            def _loss(logits, y):
-                logits = logits[visible_mask]
-                y = y[visible_mask]
-                return _f(logits, y)
+        # TODO: Rewrite this part
+        # elif loss_scope == 'seen':
+        #     def _loss(logits, y, ind_order):
+        #         visible_mask = dataset.visible_mask(ind_order)
+        #         logits = logits[visible_mask]
+        #         y = y[visible_mask]
+        #         return _f(logits, y)
         return _loss
 
     def set_training_config(self, training_config):
@@ -56,16 +58,18 @@ class PartialDomainTrainer:
         epochs = training_config['epochs']
         iterations = training_config['iterations']
         state['epochs'] = epochs
+        state['n_data_epoch'] = 0
         state['iterations'] = iterations
         state['next_epoch'] = 0
         state['next_iteration'] = 0
         lr_scheduler = CosineAnnealingLR(self.optimizer, epochs * iterations)
         state['lr_scheduler'] = lr_scheduler
         self.state = state
-        # Initialize loss function
+        # Initialize data and domain info
         training_loader = self.training_loader
         training_data = training_loader.dataset
         domain_info = training_data.domain_info
+        # Initialize loss function
         _loss = self._f_loss(self.loss_type, self.loss_scope, domain_info)
         self.f_loss = _loss
         # Set _inited flag
@@ -84,18 +88,21 @@ class PartialDomainTrainer:
         self.training_iterator = data_util.ForeverDataIterator(loader)
 
     def _training_iteration(self):
+        state = self.state
         self.model.train()
         dataset = self.training_loader.dataset
         dataset.train()
         dataset.set_scope('visible')
         optimizer = self.optimizer
         training_iterator = self.training_iterator
-        X, y = next(training_iterator)
+        _, (X, y) = next(training_iterator)
         X = X.to(self.device)
         y = y.to(self.device)
-        extraction = self.extract_batch(X, y)
-        logits = extraction.logits
-        labels = extraction.labels
+        logging.debug(f'X shape: {X.shape}, y shape: {y.shape}. ')
+        logging.debug(f'Label of training iteration: {y}. ')
+        state['n_data_epoch'] += len(y)
+        # _, logits, labels = self.extract_batch(X, y)
+        logits, _, _, labels = self.extract_batch(X, y)
         loss = self.f_loss(logits, labels)
         optimizer.zero_grad()
         loss.backward()
@@ -120,31 +127,34 @@ class PartialDomainTrainer:
 
     def extract_batch(self, X, y, f_postprocess=None):
         if f_postprocess is None:
-            f_postprocess = lambda x, y: (x, y)
+            f_postprocess = lambda x, y, z: (x, y, z)
         X = X.to(self.device)
         y = y.to(self.device)
-        logits, features = self.model(X, return_feat=True)
-        logits, features = f_postprocess(logits, features)
-        extraction = evaluate.Extraction(features, logits, y)
-        return extraction
+        logits, features, features_unpooled = self.model(X, return_feat=True, return_unpooled_feat=True)
+        logits, features, features_unpooled = f_postprocess(logits, features, features_unpooled)
+        return logits, features, features_unpooled, y
 
     def extract(self, loader, cosine_sim=False):
         f_postprocess = self._f_batch_postprocess(cosine_sim)
         features = []
+        features_unpooled = []
         logits = []
         labels = []
-        for _X, _y in loader:
-            _extraction = self.extract_batch(_X, _y, f_postprocess)
-            _features = _extraction.features
-            _logits = _extraction.logits
-            _labels = _extraction.labels
+        data_ind = []
+        for _data_ind, (_X, _y) in loader:
+            # _features, _logits, _labels = self.extract_batch(_X, _y, f_postprocess)
+            _logits, _features, _features_unpooled, _labels = self.extract_batch(_X, _y, f_postprocess)
             features.append(_features)
+            features_unpooled.append(_features_unpooled)
             logits.append(_logits)
             labels.append(_labels)
+            data_ind.append(_data_ind)
         features = torch.cat(features, dim=0)
+        features_unpooled = torch.cat(features_unpooled, dim=0)
         logits = torch.cat(logits, dim=0)
         labels = torch.cat(labels, dim=0)
-        extraction = evaluate.Extraction(features, logits, labels)
+        data_ind = torch.cat(data_ind, dim=0).to(self.device)
+        extraction = evaluate.Extraction(features, features_unpooled, logits, labels, data_ind)
         return extraction
 
     def evaluate(self):
@@ -209,6 +219,7 @@ class PartialDomainTrainer:
         logging.info('Pre-training evaluating... ')
         self._print_evaluate()
         for epoch in range(state['next_epoch'], epochs):
+            state['n_data_epoch'] = 0
             for iteration in range(state['next_iteration'], iterations):
                 logging.debug(f'Epoch {epoch}, iteration {iteration}... ')
                 # Training iteration
@@ -220,6 +231,7 @@ class PartialDomainTrainer:
                 if iteration % eval_every == 0:
                     logging.info(f'Epoch {epoch}, iteration {iteration}, evaluating... ')
                     self._print_evaluate()
+            logging.info(f'Epoch {epoch} finished. Number of data seen: {state["n_data_epoch"]}. ')
             # TODO: Refactor this line
             self.evaluate_and_save()
             state['next_iteration'] = 0

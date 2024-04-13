@@ -1,3 +1,4 @@
+import torch
 import logging
 import os
 from torchvision.datasets.utils import download_and_extract_archive
@@ -73,6 +74,22 @@ def download_data(root: str, file_name: str, archive_name: str, url_link: str):
             raise Exception(f"Fail to download {archive_name} from url link {url_link}. ")
 
 
+def torch_save(obj, file_name):
+    level = logging.getLogger().level
+    if level == logging.DEBUG:
+        logging.debug(f'Not saving {file_name} in debug mode. ')
+        return
+    torch.save(obj, file_name)
+
+
+def makedirs(dir):
+    level = logging.getLogger().level
+    if level == logging.DEBUG:
+        logging.debug(f'Not creating {dir} in debug mode. ')
+        return
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+
 """
 
 Other utilities
@@ -85,3 +102,4 @@ class DummyContext:
 
     def __exit__(self, *args):
         pass
+

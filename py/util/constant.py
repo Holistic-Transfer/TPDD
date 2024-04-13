@@ -17,3 +17,7 @@ OFFICEHOME_IMAGE_LIST_PATH = os.path.join(OFFICEHOME_DIR_PATH, 'image_list')
 
 # Logging
 LOG_FORMAT = "%(asctime)s - %(levelname)-5s - (%(filename)-10s: %(lineno)4d): %(message)s "
+
+# Space
+SPACE_LEVELS = ['base_path', 'dataset', 'arch', 'source', 'target', 'n_seen_classes', 'horizontal_visible', 'model_config', 'optimizer', 'optimizer_parameters', 'seed']
+SPACE_DEPTH = len(SPACE_LEVELS)

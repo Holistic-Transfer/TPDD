@@ -7,7 +7,7 @@ from datetime import datetime
 import torch
 
 from ..util import constant as C
-
+from ..util import common
 
 class CheckpointDirectory:
 
@@ -16,12 +16,16 @@ class CheckpointDirectory:
         self.epochs = []
         self.reload()
 
+    @property
+    def epoch_files(self):
+        return [os.path.join(self.path, f'{epoch}.pth') for epoch in self.epochs]
+
     def _check_format(self, f):
         return f.endswith('.pth') and f[:-4].isnumeric()
 
     def reload(self):
         if not os.path.exists(self.path):
-            os.makedirs(self.path)
+            common.makedirs(self.path)
         for f in os.listdir(self.path):
             if not self._check_format(f):
                 continue
@@ -39,7 +43,7 @@ class CheckpointDirectory:
         logging.debug(f'Adding epoch {epoch} to {self.path}')
         self.add(epoch)
         logging.debug(f'Saving checkpoint to {self._epoch_file(epoch)}')
-        torch.save(ckpt, self._epoch_file(epoch))
+        common.torch_save(ckpt, self._epoch_file(epoch))
 
     def epochs(self):
         return self.epochs
@@ -51,11 +55,11 @@ class CheckpointDirectory:
         assert epoch in self.epochs, f'Epoch {epoch} not found in {self.path}'
         return self._epoch_file(epoch)
 
-    def epoch_files(self):
-        return [os.path.join(self.path, f'{epoch}.pth') for epoch in self.epochs]
-
     def __str__(self):
         return f'Checkpoint Dir Epochs: {self.epochs}'
+    
+    def __repr__(self):
+        return self.__str__()
 
 class PathTree:
 
@@ -95,14 +99,19 @@ class PathTree:
         _tree = self.dict_tree
         for p in _path:
             _tree = _tree[p]
+        if not isinstance(_tree, CheckpointDirectory):
+            raise ValueError(f'Path {path} is not a checkpoint directory. ')
         return _tree
 
     def __str__(self):
         return str(self.tree)
+    
+    def __repr__(self):
+        return self.__str__()
 
 
 class Serialization:
-    def __init__(self, base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer,
+    def __init__(self, base_path, dataset, arch, source, target, n_seen_classes, horizontal_visible, model_config, optimizer,
                  optimizer_parameters, seed):
         self.base_path = base_path
         self.dataset = dataset
@@ -110,6 +119,7 @@ class Serialization:
         self.source = source
         self.target = target
         self.n_seen_classes = str(n_seen_classes)
+        self.horizontal_visible = str(horizontal_visible)
         self.model_config = str(model_config)
         self.optimizer = optimizer
         self.optimizer_parameters = str(optimizer_parameters)
@@ -117,18 +127,18 @@ class Serialization:
         self.files = None
 
     @property
-    def exists(self):
-        return os.path.exists(self.path)
-    
-    @property
     def path(self):
-        return os.path.join(self.base_path, self.dataset, self.arch, self.source, self.target, self.n_seen_classes,
+        return os.path.join(self.base_path, self.dataset, self.arch, self.source, self.target, self.n_seen_classes, self.horizontal_visible, 
                             self.model_config, self.optimizer, self.optimizer_parameters, self.seed)
 
     @property
     def source_path(self):
         return os.path.join(self.base_path, self.dataset, self.arch, self.source)
 
+    @property
+    def exists(self):
+        return os.path.exists(self.path)
+    
     @staticmethod
     def parse_path(p):
         s = os.path.normpath(p).split(os.sep)
@@ -137,25 +147,35 @@ class Serialization:
         source = s[2]
         target = s[3]
         n_seen_classes = s[4]
-        model_config = s[5]
-        optimizer = s[6]
-        optimizer_parameters = s[7]
-        seed = s[8]
-        return dataset, arch, source, target, n_seen_classes, model_config, optimizer, optimizer_parameters, seed
+        horizontal_visible = s[5]
+        model_config = s[6]
+        optimizer = s[7]
+        optimizer_parameters = s[8]
+        seed = s[9]
+        return dataset, arch, source, target, n_seen_classes, horizontal_visible, model_config, optimizer, optimizer_parameters, seed
 
     @staticmethod
     def from_path(CLS, base_path, path):
-        dataset, arch, source, target, n_seen_classes, model_config, optimizer, optimizer_parameters, seed = Serialization.parse_path(
+        dataset, arch, source, target, n_seen_classes, horizontal_visible, model_config, optimizer, optimizer_parameters, seed = Serialization.parse_path(
             path)
-        return CLS(base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer,
+        return CLS(base_path, dataset, arch, source, target, n_seen_classes, horizontal_visible, model_config, optimizer,
                    optimizer_parameters, seed)
 
     def create(self):
         assert not self.exists, f'Path {self.path} already exists. '
-        os.makedirs(self.path)
+        common.makedirs(self.path)
 
     def __str__(self):
         return f'Dataset: {self.dataset}, Arch: {self.arch}, Source: {self.source}, Target: {self.target}, N Seen Classes: {self.n_seen_classes}, Model Config: {self.model_config}, Optimizer: {self.optimizer}, Optimizer Parameters: {self.optimizer_parameters}, Seed: {self.seed}'
+
+    def __repr__(self):
+        return self.__str__()
+    
+    def __eq__(self, other):
+        return self.path == other.path
+    
+    def __hash__(self):
+        return hash(self.path)
 
 
 class Experiment(Serialization):
@@ -168,7 +188,7 @@ class Experiment(Serialization):
         self.tree._construct()
 
     def set_logging(self, debug):
-        if logging.getLogger().hasHandlers():
+        if logging.getLogger(str(os.getpid())).handlers:
             return
         
         if debug:
@@ -176,7 +196,7 @@ class Experiment(Serialization):
         else:
             level = logging.INFO
         
-        logger = logging.getLogger()
+        logger = logging.getLogger(str(os.getpid()))
         logger.setLevel(level)
 
         fh = logging.FileHandler(self.log_path, mode='w')
@@ -207,12 +227,11 @@ class Experiment(Serialization):
         if prefix is None:
             prefix = self._DEFAULT_PREFIX
         return self.tree.get(prefix).epochs()
-        
-    def get_checkpoint(self, prefix=None, epoch=None):
-        if epoch is None:
-            epoch = self.epochs(prefix)[-1]
-        return self.tree.get(prefix).epoch_file(epoch)
-
+    
+    def get_checkpoint_dir(self, prefix=None):
+        path = self.abs_path(prefix)
+        return self.tree.get(path)
+    
     def save_checkpoint(self, prefix, epoch, ckpt):
         path = self.abs_path(prefix)
         ckpt_dir = self.tree.add(path)
@@ -235,12 +254,15 @@ class SerializationSpace:
         pass
 
     def add(self, instance):
+        logging.debug(f'Adding instance {instance} to space. ')
         self.instances['dataset'][instance.dataset].add(instance)
         self.instances['optimizer'][instance.optimizer].add(instance)
         self.instances['model_config'][instance.model_config].add(instance)
         self.instances['arch'][instance.arch].add(instance)
         self.instances['source'][instance.source].add(instance)
         self.instances['optimizer_parameters'][instance.optimizer_parameters].add(instance)
+        self.instances['n_seen_classes'][instance.n_seen_classes].add(instance)
+        self.instances['horizontal_visible'][instance.horizontal_visible].add(instance)
         self.instances['seed'][instance.seed].add(instance)
         self.instances['target'][instance.target].add(instance)
 
@@ -250,6 +272,8 @@ class SerializationSpace:
         return instance
 
     def find(self, key, value):
+        assert key is not None, 'Key cannot be None. '
+        assert value is not None, 'Value cannot be None. '
         if not isinstance(key, list):
             key = [key]
         if not isinstance(value, list):
@@ -261,11 +285,16 @@ class SerializationSpace:
         instances = reduce(set.intersection, map(set, instances_arr))
         instances = list(instances)
         return instances
+    
+    def all(self):
+        all_set = self.instances['dataset'][list(self.instances['dataset'].keys())[0]]
+        all_list = list(all_set)
+        return all_list
 
     def _construct(self):
         for p, _, _ in os.walk(self.base_path):
             _rel_p = os.path.relpath(p, self.base_path)
-            if len(_rel_p.split(os.sep)) == 9:
+            if len(_rel_p.split(os.sep)) == C.SPACE_DEPTH:
                 self.add_from_path(_rel_p)
 
 
@@ -279,8 +308,8 @@ class ExperimentSpace(SerializationSpace):
     def instance_from_path(self, path):
         return Serialization.from_path(Experiment, self.base_path, path)
     
-    def start(self, dataset, arch, source, target, model_config, n_seen_classes, optimizer, optimizer_parameters, seed, debug):
-        instance = Experiment(self.base_path, dataset, arch, source, target, n_seen_classes, model_config, optimizer, optimizer_parameters, seed)
+    def start(self, dataset, arch, source, target, model_config, n_seen_classes, horizontal_visible, optimizer, optimizer_parameters, seed, debug):
+        instance = Experiment(self.base_path, dataset, arch, source, target, n_seen_classes, horizontal_visible, model_config, optimizer, optimizer_parameters, seed)
         if not instance.exists:
             instance.create()
         self.add(instance)

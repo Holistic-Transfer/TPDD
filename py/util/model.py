@@ -77,28 +77,6 @@ def get_model(model_name, pretrained=True):
             backbone.head = nn.Identity()
     return backbone
 
-
-def get_parameters(m, base_lr, freeze_classifier, freeze_backbone):
-    all_params = [{
-        "params": m.backbone.parameters(),
-        "lr": 0.1 * base_lr
-    }, {
-        "params": m.bottleneck.parameters(),
-        "lr": 1.0 * base_lr
-    }, {
-        "params": m.head.parameters(),
-        "lr": 1.0 * base_lr
-    }]
-    if freeze_classifier:
-        _ind = [0, 1]
-    elif freeze_backbone:
-        _ind = [1, 2]
-    else:
-        _ind = [0, 1, 2]
-    params = [all_params[i] for i in _ind]
-    return params
-
-
 def build_optimizer(model, optimizer, optimizer_parameters, freeze_classifier, freeze_backbone):
     assert 'lr' in optimizer_parameters, 'lr must be specified in optimizer_parameters'
     base_lr = optimizer_parameters['lr']
